@@ -21,6 +21,7 @@ signature verification in `src/core/webhook.ts`.
 |---|---|---|
 | `POLAR_WEBHOOK_SECRET` | yes | From Polar dashboard → Settings → Webhooks |
 | `ENVSYNC_LICENSE_PRIVATE_KEY` | yes | PEM contents of `license.private.pem` (the seller's private key) |
+| `POLAR_API_BASE` | no | Override API base (default `https://api.polar.sh`; use `https://sandbox-api.polar.sh` for sandbox) |
 | `RESEND_API_KEY` | no | If set, the license file is emailed; otherwise it is only logged |
 | `FROM_EMAIL` | no | Sender address for the email (default `licenses@example.com`) |
 
