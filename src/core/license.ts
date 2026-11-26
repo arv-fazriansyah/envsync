@@ -1,6 +1,13 @@
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  verifyLicense,
+  resolvePublicKey,
+  parseLicense as parseOfflineLicense,
+  serializeLicense as serializeOfflineLicense,
+  type OfflineLicense,
+} from './offline-license.js';
 
 const DEFAULT_API_BASE = 'https://api.lemonsqueezy.com/v1';
 const DEFAULT_GRACE_DAYS = 7;
@@ -30,23 +37,27 @@ export interface LicenseState {
   licensed: boolean;
   reason?: string;
   cache?: LicenseCache;
-  source?: 'env' | 'cache' | 'online';
+  source?: 'env' | 'cache' | 'online' | 'offline';
 }
 
 export interface LicenseOptions {
   cachePath?: string;
+  offlineCachePath?: string;
   graceDays?: number;
   fetchImpl?: typeof fetch;
   now?: () => Date;
   apiBaseUrl?: string;
+  publicKey?: string;
 }
 
 interface ResolvedOptions {
   cachePath: string;
+  offlineCachePath: string;
   graceDays: number;
   fetchImpl: typeof fetch;
   now: () => Date;
   apiBaseUrl: string;
+  publicKey?: string;
 }
 
 interface ApiResponse {
@@ -57,10 +68,12 @@ interface ApiResponse {
 function resolveOptions(options: LicenseOptions = {}): ResolvedOptions {
   return {
     cachePath: options.cachePath ?? resolveLicenseCachePath(process.env, process.platform),
+    offlineCachePath: options.offlineCachePath ?? resolveOfflineLicensePath(process.env, process.platform),
     graceDays: options.graceDays ?? DEFAULT_GRACE_DAYS,
     fetchImpl: options.fetchImpl ?? globalThis.fetch,
     now: options.now ?? (() => new Date()),
     apiBaseUrl: options.apiBaseUrl ?? DEFAULT_API_BASE,
+    publicKey: options.publicKey,
   };
 }
 
@@ -244,6 +257,41 @@ export async function clearLicenseCache(options: LicenseOptions = {}): Promise<v
 }
 
 /**
+ * Read the cached offline signed license, if any.
+ */
+export async function readOfflineLicense(options: LicenseOptions = {}): Promise<OfflineLicense | null> {
+  const { offlineCachePath } = resolveOptions(options);
+
+  try {
+    const raw = await readFile(offlineCachePath, 'utf-8');
+    return parseOfflineLicense(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist an offline signed license.
+ */
+export async function writeOfflineLicense(license: OfflineLicense, options: LicenseOptions = {}): Promise<void> {
+  const { offlineCachePath } = resolveOptions(options);
+
+  await mkdir(dirname(offlineCachePath), { recursive: true });
+  await writeFile(offlineCachePath, serializeOfflineLicense(license), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+}
+
+/**
+ * Remove the cached offline license.
+ */
+export async function clearOfflineLicense(options: LicenseOptions = {}): Promise<void> {
+  const { offlineCachePath } = resolveOptions(options);
+  await rm(offlineCachePath, { force: true });
+}
+
+/**
  * Decide whether this machine may use paid features.
  *
  * A fresh cache is trusted for `graceDays` so CI keeps working when
@@ -252,6 +300,28 @@ export async function clearLicenseCache(options: LicenseOptions = {}): Promise<v
 export async function getLicenseState(options: LicenseOptions = {}): Promise<LicenseState> {
   const opts = resolveOptions(options);
   const nowDate = opts.now();
+
+  // Offline signed license takes precedence (air-gapped / issued after payment).
+  const offline = await readOfflineLicense(opts);
+  if (offline) {
+    const result = verifyLicense(resolvePublicKey(opts.publicKey), offline, nowDate);
+    if (result.valid && result.payload) {
+      const cache: LicenseCache = {
+        key: result.payload.id,
+        instanceId: null,
+        instanceName: null,
+        status: 'active',
+        customerEmail: result.payload.email,
+        productName: 'envsync',
+        variantName: result.payload.plan,
+        activatedAt: result.payload.issuedAt,
+        lastValidatedAt: nowDate.toISOString(),
+        expiresAt: result.payload.expiresAt,
+      };
+      return { licensed: true, cache, source: 'offline' };
+    }
+  }
+
   const envKey = process.env['ENVSYNC_LICENSE_KEY'];
   const cached = await readLicenseCache(opts);
 
@@ -365,4 +435,20 @@ export function resolveLicenseCachePath(
 
   const base = env['XDG_CONFIG_HOME'] || join(env['HOME'] || homedir(), '.config');
   return join(base, 'envsync', 'license.json');
+}
+
+/**
+ * Where the offline signed license lives, per platform.
+ */
+export function resolveOfflineLicensePath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (platform === 'win32') {
+    const base = env['APPDATA'] || join(homedir(), 'AppData', 'Roaming');
+    return join(base, 'envsync', 'license.offline.json');
+  }
+
+  const base = env['XDG_CONFIG_HOME'] || join(env['HOME'] || homedir(), '.config');
+  return join(base, 'envsync', 'license.offline.json');
 }

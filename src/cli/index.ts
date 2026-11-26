@@ -12,14 +12,32 @@ import { parseDotenv, serializeDotenv } from '../core/secrets.js';
 import {
   activateLicense,
   clearLicenseCache,
+  clearOfflineLicense,
   deactivateLicense,
   getLicenseState,
   maskLicenseKey,
   readLicenseCache,
   resolveLicenseCachePath,
+  resolveOfflineLicensePath,
+  writeOfflineLicense,
 } from '../core/license.js';
 import { requiresLicense, adaptersUsedBySyncs } from '../core/license-gate.js';
-import { describeWebhookEvent, parseWebhookEvent, verifyWebhookSignature } from '../core/webhook.js';
+import {
+  buildPayload,
+  generateKeyPair,
+  issueLicense,
+  parseLicense as parseOfflineLicenseFile,
+  resolvePublicKey,
+  serializeLicense as serializeOfflineLicenseFile,
+  verifyLicense as verifyOfflineLicense,
+} from '../core/offline-license.js';
+import {
+  describeWebhookEvent,
+  parsePolarWebhookEvent,
+  parseWebhookEvent,
+  verifyPolarWebhookSignature,
+  verifyWebhookSignature,
+} from '../core/webhook.js';
 
 const program = new Command();
 
@@ -506,6 +524,7 @@ licenseCommand
 
     try {
       await deactivateLicense(cache.key, cache.instanceId);
+      await clearOfflineLicense();
       success('License deactivated on this machine.');
     } catch (err) {
       error(`Deactivation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -517,9 +536,15 @@ licenseCommand
   .command('webhook')
   .description('Run a local LemonSqueezy webhook receiver (for testing)')
   .option('-p, --port <port>', 'Port to listen on', '8787')
-  .option('-s, --secret <secret>', 'Signing secret (or LEMONSQUEEZY_WEBHOOK_SECRET)')
+  .option('--provider <provider>', 'Webhook provider (lemonsqueezy or polar)', 'lemonsqueezy')
+  .option('-s, --secret <secret>', 'Signing secret (or LEMONSQUEEZY_WEBHOOK_SECRET / POLAR_WEBHOOK_SECRET)')
   .action(async (options) => {
-    const secret = options.secret || process.env['LEMONSQUEEZY_WEBHOOK_SECRET'];
+    const provider = String(options.provider || 'lemonsqueezy').toLowerCase();
+    const secret =
+      options.secret ||
+      (provider === 'polar'
+        ? process.env['POLAR_WEBHOOK_SECRET']
+        : process.env['LEMONSQUEEZY_WEBHOOK_SECRET']);
     if (!secret) {
       error('Webhook signing secret required. Pass --secret or set LEMONSQUEEZY_WEBHOOK_SECRET.');
       process.exit(1);
@@ -544,17 +569,36 @@ licenseCommand
       req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
       req.on('end', () => {
         const rawBody = Buffer.concat(chunks).toString('utf8');
-        const signature = String(req.headers['x-signature'] ?? '');
 
-        if (!verifyWebhookSignature(rawBody, signature, secret)) {
+        let valid = false;
+        if (provider === 'polar') {
+          valid = verifyPolarWebhookSignature(
+            rawBody,
+            {
+              'webhook-id': String(req.headers['webhook-id'] ?? ''),
+              'webhook-timestamp': String(req.headers['webhook-timestamp'] ?? ''),
+              'webhook-signature': String(req.headers['webhook-signature'] ?? ''),
+            },
+            secret
+          );
+        } else {
+          valid = verifyWebhookSignature(rawBody, String(req.headers['x-signature'] ?? ''), secret);
+        }
+
+        if (!valid) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'invalid signature' }));
           return;
         }
 
         try {
-          const event = parseWebhookEvent(rawBody);
-          console.log(`[webhook] ${describeWebhookEvent(event)}`);
+          if (provider === 'polar') {
+            const event = parsePolarWebhookEvent(rawBody);
+            console.log(`[webhook] ${event.type}: ${JSON.stringify(event.data).slice(0, 200)}`);
+          } else {
+            const event = parseWebhookEvent(rawBody);
+            console.log(`[webhook] ${describeWebhookEvent(event)}`);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ received: true }));
         } catch (err) {
@@ -568,6 +612,133 @@ licenseCommand
       success(`Webhook receiver listening on http://localhost:${port}`);
       console.log('   Point the LemonSqueezy webhook URL at this address (use a tunnel for local testing).');
     });
+  });
+
+// license keygen - generate an Ed25519 key pair for offline licenses
+licenseCommand
+  .command('keygen')
+  .description('Generate an Ed25519 key pair for issuing offline licenses')
+  .option('-o, --out <dir>', 'Directory to write the keys into', '.')
+  .action(async (options) => {
+    try {
+      const { publicKey, privateKey } = generateKeyPair();
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      const { resolve } = await import('node:path');
+
+      await mkdir(options.out, { recursive: true });
+      const publicPath = resolve(options.out, 'license.public.pem');
+      const privatePath = resolve(options.out, 'license.private.pem');
+
+      await writeFile(publicPath, publicKey, 'utf-8');
+      await writeFile(privatePath, privateKey, { encoding: 'utf-8', mode: 0o600 });
+
+      success('Generated license key pair');
+      console.log(`   Public key:  ${publicPath}`);
+      console.log(`   Private key: ${privatePath}`);
+      console.log('');
+      console.log('⚠️  Keep license.private.pem secret. Commit license.public.pem (or set ENVSYNC_LICENSE_PUBLIC_KEY).');
+      console.log('   Buyers verify against the public key, so it must ship with the CLI you publish.');
+    } catch (err) {
+      error(`Key generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
+  });
+
+// license issue - sign a license for a buyer (run by the seller after payment)
+licenseCommand
+  .command('issue')
+  .description('Issue a signed offline license for a buyer (seller only)')
+  .requiredOption('-k, --key <path>', 'Path to license.private.pem')
+  .requiredOption('-e, --email <email>', 'Buyer email')
+  .option('-p, --plan <plan>', 'Plan name', 'personal')
+  .option('--expires <date>', 'Expiry date (ISO 8601). Omit for lifetime.')
+  .option('-o, --out <path>', 'Output license file', 'license.json')
+  .action(async (options) => {
+    try {
+      const { readFile, writeFile } = await import('node:fs/promises');
+      const { resolve } = await import('node:path');
+
+      const privateKey = await readFile(resolve(options.key), 'utf-8');
+      const payload = buildPayload({
+        email: options.email,
+        plan: options.plan,
+        expiresAt: options.expires ?? null,
+      });
+      const license = issueLicense(privateKey, payload);
+
+      const outPath = resolve(options.out);
+      await writeFile(outPath, serializeOfflineLicenseFile(license), 'utf-8');
+
+      success(`Issued license ${license.payload.id}`);
+      console.log(`   Buyer:  ${license.payload.email}`);
+      console.log(`   Plan:   ${license.payload.plan}`);
+      console.log(`   File:   ${outPath}`);
+      console.log('');
+      console.log('Send this file to the buyer. They run: envsync license import <file>');
+    } catch (err) {
+      error(`License issuance failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
+  });
+
+// license import - install a signed license (run by the buyer)
+licenseCommand
+  .command('import <file>')
+  .description('Import and verify a signed license file')
+  .action(async (file) => {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const { resolve } = await import('node:path');
+
+      const raw = await readFile(resolve(file), 'utf-8');
+      const license = parseOfflineLicenseFile(raw);
+      const result = verifyOfflineLicense(resolvePublicKey(), license);
+
+      if (!result.valid) {
+        error(`License is invalid: ${result.reason}`);
+        process.exit(1);
+      }
+
+      await writeOfflineLicense(license);
+      success('License imported and verified');
+      console.log(`   Key:   ${license.payload.id}`);
+      console.log(`   Plan:  ${license.payload.plan}`);
+      console.log(`   Email: ${license.payload.email}`);
+      if (license.payload.expiresAt) console.log(`   Expires: ${license.payload.expiresAt}`);
+      console.log(`   Cache: ${resolveOfflineLicensePath()}`);
+    } catch (err) {
+      error(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
+  });
+
+// license verify - verify a license file without installing
+licenseCommand
+  .command('verify <file>')
+  .description('Verify a signed license file without installing it')
+  .action(async (file) => {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const { resolve } = await import('node:path');
+
+      const raw = await readFile(resolve(file), 'utf-8');
+      const license = parseOfflineLicenseFile(raw);
+      const result = verifyOfflineLicense(resolvePublicKey(), license);
+
+      if (result.valid) {
+        success('License is valid');
+        console.log(`   Key:   ${license.payload.id}`);
+        console.log(`   Plan:  ${license.payload.plan}`);
+        console.log(`   Email: ${license.payload.email}`);
+        if (license.payload.expiresAt) console.log(`   Expires: ${license.payload.expiresAt}`);
+      } else {
+        error(`License is invalid: ${result.reason}`);
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      error(`Verification failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
   });
 
 // Parse arguments

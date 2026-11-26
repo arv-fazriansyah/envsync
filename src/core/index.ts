@@ -6,3 +6,4 @@ export * from './sealed-box.js';
 export * from './license.js';
 export * from './license-gate.js';
 export * from './webhook.js';
+export * from './offline-license.js';
