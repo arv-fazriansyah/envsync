@@ -34,7 +34,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arv-fazriansyah/envsync.git"
+    "url": "git+https://github.com/arv-fazriansyah/envsync.git"
   },
   "homepage": "https://github.com/arv-fazriansyah/envsync#readme",
   "bugs": {
