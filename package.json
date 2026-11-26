@@ -4,7 +4,7 @@
   "description": "Universal environment secrets sync - encrypted, git-friendly, multi-platform",
   "type": "module",
   "bin": {
-    "envsync": "./dist/cli/index.js"
+    "envsync": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -32,6 +32,14 @@
   ],
   "author": "Arvib Fazriansyah",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arv-fazriansyah/envsync.git"
+  },
+  "homepage": "https://github.com/arv-fazriansyah/envsync#readme",
+  "bugs": {
+    "url": "https://github.com/arv-fazriansyah/envsync/issues"
+  },
   "files": [
     "dist",
     "README.md",
