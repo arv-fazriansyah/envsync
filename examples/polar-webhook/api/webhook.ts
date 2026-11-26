@@ -1,6 +1,6 @@
 // api/webhook.ts  (Vercel serverless function)
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyPolarWebhookSignature, parsePolarWebhookEvent } from '../../src/core/webhook.js';
+import { verifyPolarWebhookSignature, parsePolarWebhookEvent } from '../lib/webhook.js';
 // If you deploy this as a standalone project, copy src/core/webhook.ts into lib/.
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
