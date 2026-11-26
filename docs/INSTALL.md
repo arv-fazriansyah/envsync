@@ -8,14 +8,14 @@
 ## Install from npm
 
 ```bash
-npm install -g envsync
+npm install -g @arv.fazriansyah/envsync
 envsync --version
 ```
 
 Or run it without installing:
 
 ```bash
-npx envsync --help
+npx @arv.fazriansyah/envsync --help
 ```
 
 ## Activate a license

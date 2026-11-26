@@ -19,7 +19,7 @@ Sync your environment variables and secrets between local `.env` files, 1Passwor
 
 ```bash
 # Install
-npm install -g envsync
+npm install -g @arv.fazriansyah/envsync
 # or: curl -fsSL https://envsync.dev/install.sh | sh
 
 # Initialize config
@@ -130,7 +130,7 @@ envsync decrypt -i .env.age -k private.key -o .env
 
 ```yaml
 - uses: actions/setup-node@v4
-- run: npm install -g envsync
+- run: npm install -g @arv.fazriansyah/envsync
 - run: envsync sync deploy --no-dry-run
   env:
     DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

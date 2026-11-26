@@ -1,5 +1,5 @@
 {
-  "name": "envsync",
+  "name": "@arv.fazriansyah/envsync",
   "version": "0.1.0",
   "description": "Universal environment secrets sync - encrypted, git-friendly, multi-platform",
   "type": "module",
