@@ -9,7 +9,7 @@ export const OFFLINE_LICENSE_VERSION = 1 as const;
  * or by rebuilding with their own key) before publishing.
  */
 export const DEFAULT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEA8JFOvd4heKvpgohFxjZE/6zL37SgliqvghDi3vbbBG0=
+MCowBQYDK2VwAyEAkSL9m32uZWtadNTloekcYzLHURFZO7QO4of1Lk/IekA=
 -----END PUBLIC KEY-----`;
 
 /**
