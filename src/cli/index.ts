@@ -3,11 +3,23 @@
 import { Command } from 'commander';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { createSyncEngine, executeAllSyncs } from '../core/sync.js';
 import { Config, parseConfig, defaultConfig, CONFIG_PATHS, AdapterConfigSchema } from '../core/config.js';
 import { adapterRegistry } from '../adapters/index.js';
 import { generateAgeKeyPair, encryptForRecipients, decryptWithPrivateKey, EncryptedData } from '../core/crypto.js';
 import { parseDotenv, serializeDotenv } from '../core/secrets.js';
+import {
+  activateLicense,
+  clearLicenseCache,
+  deactivateLicense,
+  getLicenseState,
+  maskLicenseKey,
+  readLicenseCache,
+  resolveLicenseCachePath,
+} from '../core/license.js';
+import { requiresLicense, adaptersUsedBySyncs } from '../core/license-gate.js';
+import { describeWebhookEvent, parseWebhookEvent, verifyWebhookSignature } from '../core/webhook.js';
 
 const program = new Command();
 
@@ -222,6 +234,24 @@ program
   .action(async (name, options) => {
     const config = await loadConfig(options.config);
     const dryRun = options.dryRun !== false;
+
+    // Cloud adapters require an active license when changes are applied.
+    // Dry runs stay free so people can evaluate before buying.
+    if (!dryRun) {
+      const syncNames = name && !options.all ? [name] : undefined;
+      const usedAdapters = adaptersUsedBySyncs(config, syncNames);
+      const requirement = requiresLicense(config, { adapters: usedAdapters });
+      if (requirement.required) {
+        const state = await getLicenseState();
+        if (!state.licensed) {
+          error(state.reason || 'A license is required to sync with cloud adapters.');
+          console.log(`\n   Adapters that need a license: ${requirement.adapters.join(', ')}`);
+          console.log('   Activate with: envsync license activate <key>');
+          console.log('   Check status with: envsync license status');
+          process.exit(1);
+        }
+      }
+    }
     
     if (dryRun) {
       warn('Running in DRY RUN mode. Use --no-dry-run to apply changes.');
@@ -405,6 +435,139 @@ program
     }
     
     console.log('\nRun `envsync validate` to check config validity.');
+  });
+
+// license - Manage the paid license
+const licenseCommand = program
+  .command('license')
+  .description('Manage your envsync license');
+
+licenseCommand
+  .command('activate <key>')
+  .description('Activate a license key on this machine')
+  .option('-n, --name <name>', 'Instance name shown in LemonSqueezy', hostname())
+  .action(async (key, options) => {
+    try {
+      const cache = await activateLicense(key, options.name);
+      success(`License activated (${maskLicenseKey(cache.key)})`);
+      if (cache.customerEmail) console.log(`   Customer: ${cache.customerEmail}`);
+      if (cache.variantName) console.log(`   Plan: ${cache.variantName}`);
+      console.log(`   Cache: ${resolveLicenseCachePath()}`);
+    } catch (err) {
+      error(`Activation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
+  });
+
+licenseCommand
+  .command('status')
+  .description('Show the current license status')
+  .action(async () => {
+    const state = await getLicenseState();
+    const cache = state.cache ?? (await readLicenseCache());
+
+    if (!state.licensed) {
+      error(state.reason || 'Not licensed.');
+      if (cache) {
+        console.log(`   Key: ${maskLicenseKey(cache.key)}`);
+        console.log(`   Last validated: ${cache.lastValidatedAt}`);
+      }
+      console.log('\n   Free tier: dotenv adapters only.');
+      console.log('   Activate with: envsync license activate <key>');
+      process.exitCode = 1;
+      return;
+    }
+
+    success(`Licensed${state.source ? ` (${state.source})` : ''}`);
+    if (cache) {
+      console.log(`   Key: ${maskLicenseKey(cache.key)}`);
+      if (cache.variantName) console.log(`   Plan: ${cache.variantName}`);
+      console.log(`   Instance: ${cache.instanceName ?? cache.instanceId ?? 'unknown'}`);
+      console.log(`   Last validated: ${cache.lastValidatedAt}`);
+      if (cache.expiresAt) console.log(`   Expires: ${cache.expiresAt}`);
+    }
+  });
+
+licenseCommand
+  .command('deactivate')
+  .description('Deactivate this machine and remove the local license cache')
+  .action(async () => {
+    const cache = await readLicenseCache();
+    if (!cache) {
+      warn('No license cache found on this machine.');
+      return;
+    }
+
+    if (!cache.instanceId) {
+      await clearLicenseCache();
+      success('Local license cache removed.');
+      return;
+    }
+
+    try {
+      await deactivateLicense(cache.key, cache.instanceId);
+      success('License deactivated on this machine.');
+    } catch (err) {
+      error(`Deactivation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      process.exit(1);
+    }
+  });
+
+licenseCommand
+  .command('webhook')
+  .description('Run a local LemonSqueezy webhook receiver (for testing)')
+  .option('-p, --port <port>', 'Port to listen on', '8787')
+  .option('-s, --secret <secret>', 'Signing secret (or LEMONSQUEEZY_WEBHOOK_SECRET)')
+  .action(async (options) => {
+    const secret = options.secret || process.env['LEMONSQUEEZY_WEBHOOK_SECRET'];
+    if (!secret) {
+      error('Webhook signing secret required. Pass --secret or set LEMONSQUEEZY_WEBHOOK_SECRET.');
+      process.exit(1);
+    }
+
+    const port = Number(options.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      error(`Invalid port: ${options.port}`);
+      process.exit(1);
+    }
+
+    const { createServer } = await import('node:http');
+
+    const server = createServer((req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'method not allowed' }));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        const rawBody = Buffer.concat(chunks).toString('utf8');
+        const signature = String(req.headers['x-signature'] ?? '');
+
+        if (!verifyWebhookSignature(rawBody, signature, secret)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid signature' }));
+          return;
+        }
+
+        try {
+          const event = parseWebhookEvent(rawBody);
+          console.log(`[webhook] ${describeWebhookEvent(event)}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ received: true }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'invalid payload' }));
+        }
+      });
+    });
+
+    server.listen(port, () => {
+      success(`Webhook receiver listening on http://localhost:${port}`);
+      console.log('   Point the LemonSqueezy webhook URL at this address (use a tunnel for local testing).');
+    });
   });
 
 // Parse arguments

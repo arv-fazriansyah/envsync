@@ -13,7 +13,7 @@ Sync your environment variables and secrets between local `.env` files, 1Passwor
 - 🔍 **Dry-run by default** — Preview changes before applying
 - 🎯 **Conflict resolution** — Source-wins, dest-wins, merge, prompt, skip
 - 🔧 **Key transformation** — Prefix, suffix, case conversion per adapter
-- 📦 **Single binary** — No runtime dependencies, easy distribution
+- 📦 **Node CLI** — `npm install -g envsync`, works on macOS, Linux, Windows
 
 ## Quick Start
 
@@ -87,11 +87,8 @@ Create `.envsync.json` (or `.envsync.yaml`):
 | Doppler | `doppler` | ✅ | ✅ | Token |
 | GitHub Actions | `github-actions` | ✅ | ✅ | `GITHUB_TOKEN` |
 | Vercel | `vercel` | ✅ | ✅ | Token |
-| Netlify | `netlify` | ✅ | ✅ | Token |
-| AWS Parameter Store | `aws-parameter-store` | ✅ | ✅ | AWS creds |
-| Kubernetes | `kubernetes` | ✅ | ✅ | kubeconfig |
 
-*More adapters planned: Infisical, Cloudflare, Railway, Render, Fly.io, Azure Key Vault, GCP Secret Manager*
+*Planned: Netlify, AWS Parameter Store, Kubernetes, Infisical, Cloudflare, Railway, Render, Fly.io, Azure Key Vault, GCP Secret Manager*
 
 ## Encryption
 
@@ -125,6 +122,7 @@ envsync decrypt -i .env.age -k private.key -o .env
 | `list-adapters` | List available adapters |
 | `validate` | Validate config |
 | `doctor` | Check system requirements |
+| `license` | Activate, check, and deactivate your license |
 
 ## CI/CD Integration
 
@@ -154,8 +152,4 @@ envsync decrypt -i .env.age -k private.key -o .env
 
 ## License
 
-MIT — Free for personal and commercial use.
-
-## Pro Version
-
-Team features, priority support, and managed hosting available at [envsync.dev](https://envsync.dev).
+envsync is commercial software. The `dotenv` adapter and the encryption helpers are\nfree to use; cloud adapters (Doppler, GitHub Actions, Vercel, 1Password) require\nan active license. See [LICENSE](./LICENSE) and [docs/INSTALL.md](./docs/INSTALL.md).\n\n## Pro Version\n\nTeam vault, priority support, and managed hosting available at\n[envsync.dev](https://envsync.dev).
