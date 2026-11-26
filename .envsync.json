@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "project": {
+    "name": "my-saas",
+    "description": "Environment secrets sync for my SaaS project"
+  },
+  "adapters": {
+    "local-env": {
+      "type": "dotenv",
+      "name": "local-env",
+      "enabled": true,
+      "path": ".env",
+      "format": "dotenv",
+      "backup": true,
+      "include": ["*"],
+      "exclude": [],
+      "transform": {
+        "prefix": "",
+        "suffix": "",
+        "uppercase": false,
+        "lowercase": false
+      }
+    },
+    "doppler-dev": {
+      "type": "doppler",
+      "name": "doppler-dev",
+      "enabled": true,
+      "project": "my-project",
+      "config": "dev",
+      "include": ["*"],
+      "exclude": [],
+      "transform": {
+        "prefix": "",
+        "suffix": "",
+        "uppercase": false,
+        "lowercase": false
+      }
+    },
+    "github-repo": {
+      "type": "github-actions",
+      "name": "github-repo",
+      "enabled": true,
+      "repo": "owner/repo",
+      "level": "repository",
+      "include": ["*"],
+      "exclude": [],
+      "transform": {
+        "prefix": "",
+        "suffix": "",
+        "uppercase": false,
+        "lowercase": false
+      }
+    },
+    "vercel-prod": {
+      "type": "vercel",
+      "name": "vercel-prod",
+      "enabled": true,
+      "projectId": "prj_xxxxxxxxx",
+      "target": "production",
+      "include": ["*"],
+      "exclude": [],
+      "transform": {
+        "prefix": "",
+        "suffix": "",
+        "uppercase": false,
+        "lowercase": false
+      }
+    }
+  },
+  "sync": {
+    "local-to-doppler": {
+      "source": "local-env",
+      "destinations": ["doppler-dev"],
+      "conflict": "prompt",
+      "dryRun": true,
+      "backup": true,
+      "validate": true
+    },
+    "local-to-github": {
+      "source": "local-env",
+      "destinations": ["github-repo"],
+      "conflict": "source-wins",
+      "dryRun": true,
+      "backup": true,
+      "validate": true
+    },
+    "local-to-vercel": {
+      "source": "local-env",
+      "destinations": ["vercel-prod"],
+      "conflict": "source-wins",
+      "dryRun": true,
+      "backup": true,
+      "validate": true
+    },
+    "full-sync": {
+      "source": "local-env",
+      "destinations": ["doppler-dev", "github-repo", "vercel-prod"],
+      "conflict": "source-wins",
+      "dryRun": true,
+      "backup": true,
+      "validate": true
+    }
+  },
+  "team": {
+    "enabled": false,
+    "path": ".envsync.vault",
+    "members": [],
+    "rotation": {
+      "enabled": false,
+      "intervalDays": 90,
+      "notifyBeforeDays": 7
+    }
+  },
+  "settings": {
+    "defaultConflict": "prompt",
+    "autoSave": false,
+    "verbose": false,
+    "color": true,
+    "checkUpdates": true
+  }
+}

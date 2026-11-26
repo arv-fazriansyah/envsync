@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Secrets and local env files - never commit
+.env
+.env.*
+!.env.example
+*.key
+*.age
+*.pem
+
+# Test / coverage output
+coverage/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
