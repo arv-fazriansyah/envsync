@@ -10,8 +10,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  const apiBase = process.env.POLAR_API_BASE ?? 'https://api.polar.sh';
   const body = { products: [productId] };
-  const response = await fetch('https://api.polar.sh/v1/checkouts/', {
+  const response = await fetch(`${apiBase}/v1/checkouts/`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
