@@ -16,6 +16,7 @@ import {
 
 let dir: string;
 let cachePath: string;
+let offlineCachePath: string;
 
 interface RecordedCall {
   url: string;
@@ -81,6 +82,7 @@ const now = () => new Date('2026-01-01T00:00:00Z');
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'envsync-license-'));
   cachePath = join(dir, 'license.json');
+  offlineCachePath = join(dir, 'license.offline.json');
   delete process.env['ENVSYNC_LICENSE_KEY'];
 });
 
@@ -183,7 +185,7 @@ describe('deactivateLicense', () => {
 
 describe('getLicenseState', () => {
   it('reports no license when there is no cache and no env key', async () => {
-    const state = await getLicenseState({ cachePath, now });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now });
 
     expect(state.licensed).toBe(false);
     expect(state.reason).toMatch(/no license/i);
@@ -193,7 +195,7 @@ describe('getLicenseState', () => {
     await writeLicenseCache(freshCache(), { cachePath });
     const { calls, fetchImpl } = mockFetch({});
 
-    const state = await getLicenseState({ cachePath, now, fetchImpl });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now, fetchImpl });
 
     expect(state.licensed).toBe(true);
     expect(state.source).toBe('cache');
@@ -211,7 +213,7 @@ describe('getLicenseState', () => {
       instance: { id: 'inst-1', name: 'laptop' },
     });
 
-    const state = await getLicenseState({ cachePath, now, graceDays: 7, fetchImpl });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now, graceDays: 7, fetchImpl });
 
     expect(calls).toHaveLength(1);
     expect(state.licensed).toBe(true);
@@ -228,7 +230,7 @@ describe('getLicenseState', () => {
       throw new Error('network down');
     }) as unknown as typeof fetch;
 
-    const state = await getLicenseState({ cachePath, now, graceDays: 7, fetchImpl });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now, graceDays: 7, fetchImpl });
 
     expect(state.licensed).toBe(true);
     expect(state.source).toBe('cache');
@@ -243,7 +245,7 @@ describe('getLicenseState', () => {
       throw new Error('network down');
     }) as unknown as typeof fetch;
 
-    const state = await getLicenseState({ cachePath, now, graceDays: 7, fetchImpl });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now, graceDays: 7, fetchImpl });
 
     expect(state.licensed).toBe(false);
     expect(state.reason).toMatch(/offline/i);
@@ -255,7 +257,7 @@ describe('getLicenseState', () => {
       { cachePath }
     );
 
-    const state = await getLicenseState({ cachePath, now });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now });
 
     expect(state.licensed).toBe(false);
     expect(state.reason).toMatch(/expired/i);
@@ -264,7 +266,7 @@ describe('getLicenseState', () => {
   it('reports a non-active license status', async () => {
     await writeLicenseCache(freshCache({ status: 'disabled' }), { cachePath });
 
-    const state = await getLicenseState({ cachePath, now });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now });
 
     expect(state.licensed).toBe(false);
     expect(state.reason).toMatch(/disabled/i);
@@ -278,7 +280,7 @@ describe('getLicenseState', () => {
       instance: { id: 'ci-runner', name: 'ci' },
     });
 
-    const state = await getLicenseState({ cachePath, now, fetchImpl });
+    const state = await getLicenseState({ cachePath, offlineCachePath, now, fetchImpl });
 
     expect(calls[0]!.url).toBe('https://api.lemonsqueezy.com/v1/licenses/validate');
     expect(JSON.parse(calls[0]!.body!).license_key).toBe('ENV-KEY-9999');
